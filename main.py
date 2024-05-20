@@ -17,8 +17,8 @@ class Main:
         # Первичные данные, настройки системы
         self.settings['MYDIR_1min'] = 'big_data/1min/'
         self.settings['MYDIR_5min'] = 'big_data/5min/'
-        self.settings['MYDIR_TF'] = self.settings['MYDIR_5min'] # рабочий таймфрейм
         self.settings['MYDIR_15min'] = 'big_data/15min/'
+        self.settings['MYDIR_TF'] = self.settings['MYDIR_5min'] # рабочий таймфрейм
         self.settings['set_strat'] = 'big_data/set_strat.txt'
         self.settings['how_mach_coin_trade'] = 20 # сколько монет торговать
         self.settings['HOW_MACH_SET'] = 20 # сколько настроек сгенерировать
@@ -26,10 +26,11 @@ class Main:
         self.settings['DEPOSIT'] = 100 # начальный депозит
         self.settings['COMMISSION_MAKER'] = 0.002 # комиссия мейкер
         self.settings['COMMISSION_TAKER'] = 0.001 # комиссия тейкер
+        self.settings['DEPOSIT_START'] = self.settings['DEPOSIT']
 
 
         self.settings['strategy_coin'] = 1 # стратения выбора монет 1- по объёму, 2 - по проценту движения
-        self.settings['regime_set'] = 1 # 1 - использовать сет настреок из файла, 0 - сформировать сет настроек
+        self.settings['regime_set'] = 0 # 1 - использовать сет настреок из файла, 0 - сформировать сет настроек
         self.settings['regime_profit'] = 1 # Режим ТП и СЛ, 1 - фиксированный, 0 - Динамический
         self.settings['regime_volume'] = 1 # Режим объёмов, 1 - фиксированный, 0 - Динамический
 
@@ -42,44 +43,58 @@ class Main:
 
         self.get_set_settings() # получаем сет настроек в словарь set_settings
 
-        for i in range(len(self.set_settings)): # итерируемся по кол-ву настроек в сете настроек
-            # self.set_settings[i] - натсройки текущего шага итерации
-            if i>0: # начинаем торговать со второго дня в сете, за первый день собираем монеты для торговли
-                self.settings['coins_worker'] = self.get_mass_coin_for_strategy(i) # получаем список монет, с которыми будем работать сегодня
 
-                for coin in self.settings['coins_worker']:
-                    if self.settings['regime_set_trade_profit'] == "Динамический":
-                        tp_sl_dinamic[coin] = self.cslculat_dinamic_TP_SL(pd.read_csv(f'{self.settings['MYDIR_15min']}{i-1}/{coin}.csv')) # вычисляем динамические TP и SL для одной монеты 'BTCUSDT': [0.05,0.02] и так по каждой монете
-                    if self.settings['regime_set_trade_volume'] == "Динамический":
-                        VOLUME_dinamic[coin] = self.cslculat_dinamic_VALUE(pd.read_csv(f'{self.settings['MYDIR_15min']}{i-1}/{coin}.csv')) # вычисляем динамические объёмы для одной монеты 'BTCUSDT': [6500512,415515125] и так по каждой монете
+        for set in range(len(self.set_settings)): # итерируемся по кол-ву настроек в сете настроек
+            self.settings['count_etap'] = len(os.listdir(self.settings['MYDIR_5min']))
+            self.settings['number_set'] = set
+            self.bar = progressbar.ProgressBar(maxval=self.settings['count_etap']).start() # прогресс бар в консоли
+            for day in range(self.settings['count_etap']):
+                self.bar.update(day)
+                # self.set_settings[i] - натсройки текущего шага итерации
+                if day>0: # начинаем торговать со второго дня, за первый день собираем монеты для торговли
+                    self.settings['coins_worker'] = self.get_mass_coin_for_strategy(day) # получаем список монет, с которыми будем работать сегодня
+                    for coin in self.settings['coins_worker']: # если динамический режим, формируем динамические переменные - тейк и объёмы
+                        if self.settings['regime_profit'] == "Динамический":
+                            tp_sl_dinamic[coin] = self.cslculat_dinamic_TP_SL(pd.read_csv(f'{self.settings['MYDIR_15min']}{day-1}/{coin}.csv')) # вычисляем динамические TP и SL для одной монеты 'BTCUSDT': [0.05,0.02] и так по каждой монете
+                        if self.settings['regime_volume'] == "Динамический":
+                            VOLUME_dinamic[coin] = self.cslculat_dinamic_VALUE(pd.read_csv(f'{self.settings['MYDIR_15min']}{day-1}/{coin}.csv')) # вычисляем динамические объёмы для одной монеты 'BTCUSDT': [6500512,415515125] и так по каждой монете
+                    self.settings['day_trade'] = day # номер дня торговли
+                    self.settings['tp_sl_dinamic'] = tp_sl_dinamic # сохраняем динамический тейк всех монет в натсройки
+                    self.settings['VOLUME_dinamic'] = VOLUME_dinamic # сохраняем динамический объём всех монет в настройки
 
+                    self.finish_trade = self.colbeak_etap # функция, которая срабатывает при выполнении одного этапа торговли - по одной натсройке
+                    self.trade_start = Core_trade(self.settings,self.set_settings[set]) # создаем экземпляр класса ядра торговли
+                    self.trade_start.start_trade(self.finish_trade) # стартуем ядро  торговли
 
-                self.finish_trade = self.colbeak_etap # функция, которая срабатывает при выполнении одного этапа торговли - по одной натсройке
-                self.trade_start = Core_trade(self.master,self.settings) # создаем экземпляр класса ядра торговли
-                self.trade_start.start_trade(self.finish_trade) # стартуем ядро  торговли
-
+                    self.settings['day_trade_non_sliv'] = day # дней без слива
+                    self.settings['DEPOSIT'] = self.data_final['depo_trade_finish']
+                    if self.data_final['if_depo_slif'] == 1:
+                        print(f'День {day} | Депозит меньше 40% от начального. Торговля остановлена')
+                        break
+            print(f'Сет настроек {set}/{len(self.set_settings)} Выполнено  |  Результат - {self.data_final['depo_trade_finish']}   | ')
+                    
 
 
 
 
     # колбэк из ядра торговли
     def colbeak_etap(self,data_final):
-        print('Закончили этап торговли')
         self.data_final = data_final
+        
 
     # считаем динамические объёмы для одной омнеты по датафрейму
     def cslculat_dinamic_VALUE(self,df):
         VOLUME_coin = 0
         for nonindex, row in df.iterrows():
             VOLUME_coin=VOLUME_coin+row['VOLUME']*row['open']
-        return [VOLUME_coin*self.settings['VALUE_TRADE_MIN']/100,VOLUME_coin*self.settings['VALUE_TRADE_MAKS']/100]
+        return [VOLUME_coin*self.set_settings['VALUE_TRADE_MIN']/100,VOLUME_coin*self.set_settings['VALUE_TRADE_MAKS']/100]
 
     # счтаем динамический тейк и стоп для одной омнеты по датафрейму
     def cslculat_dinamic_TP_SL(self,df):
         my_max = df['open'].loc[df['open'].idxmax()]
         my_min = df['close'].loc[df['close'].idxmin()]
         moving = 1-(my_min/my_max)
-        return [moving*self.settings['TP']/100,self.settings['SL']]
+        return [moving*self.settings['TP']/100,self.set_settings['SL']]
 
     # получаем массив монет, которые будем торговать сегодня
     def get_mass_coin_for_strategy(self,day):
@@ -108,7 +123,6 @@ class Main:
             result_coin_spisok.sort(key = lambda x: x[1], reverse=True)
             for i in range(self.settings['how_mach_coin_trade_start'],self.settings['how_mach_coin_trade_start']+int(self.settings['how_mach_coin_trade'])):
                 result.append(result_coin_spisok[i][0])
-        
         df_work = pd.read_csv(f'{self.settings['MYDIR_TF']}0/{result[0]}.csv') # получили датафрейм из файла
         df_see = pd.read_csv(f'{self.settings['MYDIR_1min']}0/{result[0]}.csv') # получили датафрейм из файла
         self.settings['VOLUME'] = len(df_work) # сохраняем объёмы фреймов раочего
